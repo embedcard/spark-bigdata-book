@@ -105,7 +105,7 @@ public class BatchWorkflow {
 		JavaSparkContext jsc = JavaSparkContext.fromSparkContext(SparkContext.getOrCreate(conf));
 		
 		JavaPairRDD<Text,Data> hadoopFile = jsc.hadoopFile(source.getInstanceRoot(), SequenceFilePailDataInputFormat.class, Text.class, Data.class,0);
-		// TODO: check if there is a more performant way to do it
+		// TODO: check if there is a more efficient way to do it
 		hadoopFile.foreach(f-> {
 			Pail s = new Pail(Mode.SPARK,sinkFolder);
 			TypedRecordOutputStream stream = s.openWrite();
