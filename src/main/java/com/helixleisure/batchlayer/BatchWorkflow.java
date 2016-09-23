@@ -160,9 +160,9 @@ public class BatchWorkflow {
 			Data data = value._2.deepCopy();
 			DataUnit du = data.getDataunit();
 			if (du.getSetField() == DataUnit._Fields.PAGE_VIEW) {
-				normalize(du.getPage_view().getPage());
+				normalize(du.getPageView().getPage());
 			} else if (du.getSetField() == DataUnit._Fields.PAGE_PROPERTY) {
-				normalize(du.getPage_property().getId());
+				normalize(du.getPageProperty().getId());
 			}
 			return data;
 		}
