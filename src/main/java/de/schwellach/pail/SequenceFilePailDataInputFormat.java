@@ -1,4 +1,4 @@
-package com.helixleisure.pail;
+package de.schwellach.pail;
 
 import java.io.EOFException;
 import java.io.IOException;

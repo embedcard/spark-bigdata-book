@@ -1,4 +1,4 @@
-package com.helixleisure.pail;
+package de.schwellach.pail;
 
 import com.helixleisure.schema.Data;
 

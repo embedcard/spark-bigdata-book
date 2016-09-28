@@ -1,4 +1,4 @@
-package com.helixleisure.test;
+package de.schwellach.test;
 
 import com.helixleisure.schema.DataUnit;
 import com.helixleisure.schema.EquivEdge;

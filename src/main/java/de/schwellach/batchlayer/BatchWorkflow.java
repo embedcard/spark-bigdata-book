@@ -1,8 +1,8 @@
-package com.helixleisure.batchlayer;
+package de.schwellach.batchlayer;
 
 
-import static com.helixleisure.test.Data.makeEquiv;
-import static com.helixleisure.test.Data.makePageview;
+import static de.schwellach.test.Data.makeEquiv;
+import static de.schwellach.test.Data.makePageview;
 
 import java.io.IOException;
 import java.net.MalformedURLException;
@@ -29,9 +29,6 @@ import org.slf4j.LoggerFactory;
 import com.backtype.hadoop.pail.Pail;
 import com.backtype.hadoop.pail.Pail.Mode;
 import com.backtype.hadoop.pail.Pail.TypedRecordOutputStream;
-import com.helixleisure.pail.DataPailStructure;
-import com.helixleisure.pail.SequenceFilePailDataInputFormat;
-import com.helixleisure.pail.SplitDataPailStructure;
 import com.helixleisure.schema.Data;
 import com.helixleisure.schema.DataUnit;
 import com.helixleisure.schema.EquivEdge;
@@ -39,6 +36,9 @@ import com.helixleisure.schema.PageID;
 import com.helixleisure.schema.PageViewEdge;
 import com.helixleisure.schema.PersonID;
 
+import de.schwellach.pail.DataPailStructure;
+import de.schwellach.pail.SequenceFilePailDataInputFormat;
+import de.schwellach.pail.SplitDataPailStructure;
 import scala.Tuple2;
 import scala.Tuple3;
 import scala.Tuple4;
