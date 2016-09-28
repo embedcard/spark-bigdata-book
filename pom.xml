@@ -123,34 +123,6 @@
 							<goal>testCompile</goal>
 						</goals>
 					</execution>
-					<execution>
-						<id>generate-thrift-csharp</id>
-						<phase>generate-sources</phase>
-						<configuration>
-							<generator>csharp</generator>
-							<outputDirectory>
-								gen-csharp
-							</outputDirectory>
-							<compileOutput>false</compileOutput>
-						</configuration>
-						<goals>
-							<goal>compile</goal>
-						</goals>
-					</execution>
-					<execution>
-						<id>generate-thrift-nodejs</id>
-						<phase>generate-sources</phase>
-						<configuration>
-							<generator>js:node</generator>
-							<outputDirectory>
-								gen-nodejs
-							</outputDirectory>
-							<compileOutput>false</compileOutput>
-						</configuration>
-						<goals>
-							<goal>compile</goal>
-						</goals>
-					</execution>
 				</executions>
 			</plugin>
 		</plugins>

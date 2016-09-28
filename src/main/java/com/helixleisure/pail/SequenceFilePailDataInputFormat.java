@@ -82,7 +82,9 @@ public class SequenceFilePailDataInputFormat<T> extends SequenceFileInputFormat<
            this.conf = conf;
            this.recordsRead = 0;
            this.reporter = reporter;
-           LOG.info("Processing pail file " + split.getPath().toString());
+           if (LOG.isInfoEnabled()) {
+        	   LOG.info("Processing pail file {}",split.getPath().toString());
+           }
            resetDelegate();
         }
 

@@ -7,6 +7,10 @@ import static com.helixleisure.test.Data.makePageview;
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.TreeSet;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -17,7 +21,9 @@ import org.apache.spark.SparkContext;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.api.java.Optional;
 import org.apache.spark.api.java.function.Function;
+import org.apache.spark.api.java.function.Function2;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,8 +37,11 @@ import com.helixleisure.schema.Data;
 import com.helixleisure.schema.DataUnit;
 import com.helixleisure.schema.EquivEdge;
 import com.helixleisure.schema.PageID;
+import com.helixleisure.schema.PersonID;
 
 import scala.Tuple2;
+import scala.Tuple3;
+import scala.Tuple4;
 
 
 public class BatchWorkflow {
@@ -99,6 +108,7 @@ public class BatchWorkflow {
 		Pail snapshotPail = newDataPail.snapshot("/tmp/swa/newDataSnapshot");
 		appendNewDataToMasterDataPail(masterPail, snapshotPail);
 		newDataPail.deleteSnapshot(snapshotPail);
+		masterPail.consolidate();
 	}
 	
 	@SuppressWarnings("rawtypes")
@@ -125,6 +135,7 @@ public class BatchWorkflow {
 			stream.writeObject(f._2);
 			stream.close();
 		});
+		jsc.close();
 		return sink;
 	}
 	
@@ -182,6 +193,10 @@ public class BatchWorkflow {
 		}
 	}
 	
+	/*
+	 * Normalizing the user ID's. User ID's belonging to the same person are marked as equivs
+	 */
+	@SuppressWarnings({ "unchecked", "rawtypes" })
 	public void normalizeUserIds() throws IOException {
 		Pail equivs = new Pail(Mode.SPARK, DATA_ROOT+"master").getSubPail(DataUnit._Fields.EQUIV.getThriftFieldId());
 		String output = "/tmp/swa/equivs0";
@@ -189,25 +204,122 @@ public class BatchWorkflow {
 		JavaSparkContext jsc = JavaSparkContext.fromSparkContext(SparkContext.getOrCreate(conf));
 		JavaPairRDD<Text,Data> hadoopFile = jsc.hadoopFile(equivs.getInstanceRoot(), SequenceFilePailDataInputFormat.class, Text.class, Data.class,0);
 
-		
-		JavaRDD<Tuple2> map = hadoopFile.map(f->{
+		JavaRDD<Tuple2<PersonID,PersonID>> map = hadoopFile.map(f->{
 			Data data = f._2;
 			EquivEdge equiv = data.getDataunit().getEquiv();
-			return new Tuple2(equiv.getId1(),equiv.getId2());
+			return new Tuple2<>(equiv.getId1(),equiv.getId2());
 		});
-		map.saveAsTextFile(output);
+		map.saveAsObjectFile(output);
 		int i = 1;
 		while(true) {
-			runUserIdNormalizationIteration(i);
-			
+			JavaRDD<Tuple2<PersonID, PersonID>> progressEdges = runUserIdNormalizationIteration(jsc,i);
+			if (progressEdges.count()==0) {
+				break;
+			}
+			i++;
 		}
 		
-	}
-	
-	private void runUserIdNormalizationIteration(int i) {
+		Pail pageviewsPail = new Pail(Mode.SPARK,"/tmp/swa/normalized_urls").getSubPail(DataUnit._Fields.PAGE_VIEW.getThriftFieldId());
+		JavaPairRDD<Text,Data> pageviews = jsc.hadoopFile(pageviewsPail.getInstanceRoot(), SequenceFilePailDataInputFormat.class, Text.class, Data.class,0);
+		JavaRDD<Tuple2<PersonID,PersonID>> newIds = jsc.objectFile("/tmp/swa/equivs"+i);
+		String resultFolder = "/tmp/swa/normalized_pageview_users";
+		Pail.create(Mode.SPARK,resultFolder, new SplitDataPailStructure());
+		
+		pageviews.foreach(f->LOG.debug(f.toString()));
+		newIds.foreach(f->LOG.debug(f.toString()));
+		
+		JavaPairRDD<PersonID, PersonID> newIdsPerson = newIds.mapToPair(f-> {
+			return new Tuple2<>(f._2,f._1);
+		});
+		
+		JavaPairRDD<PersonID,Data> pageviewsPair = pageviews.mapToPair(f->{
+			Data data = f._2;
+			PersonID person = data.getDataunit().getPageView().getPerson();
+			return new Tuple2<>(person,data);
+		});
+		JavaPairRDD<PersonID,Tuple2<Data,Optional<PersonID>>> leftOuterJoin = pageviewsPair.leftOuterJoin(newIdsPerson);
+		leftOuterJoin.foreach(f->LOG.debug(f.toString()));
+		
+		JavaRDD<Data> normalizedPageview = leftOuterJoin.map(f-> {
+			Tuple2<Data,Optional<PersonID>> tuple2 = f._2();
+			Data data = tuple2._1();
+			if (tuple2._2().isPresent()) {
+				data.getDataunit().getPageView().setPerson(tuple2._2.get());
+			}
+			return data;
+		});
+		
+		normalizedPageview.foreach(f->{
+			if (LOG.isDebugEnabled()) {
+				LOG.debug("serializing {}",f);
+			}
+			Pail out = new Pail(Mode.SPARK,resultFolder);
+			TypedRecordOutputStream stream = out.openWrite();
+			stream.writeObject(f);
+			stream.close();
+		});
+		
+		
 		
 	}
 	
+	@SuppressWarnings("unchecked")
+	private JavaRDD<Tuple2<PersonID, PersonID>> runUserIdNormalizationIteration(JavaSparkContext jsc, int i) {
+		String output = "/tmp/swa/equivs"+i;
+		JavaRDD<Object> objectFile = jsc.objectFile("/tmp/swa/equivs"+ (i-1));
+
+		// Bidirectional Edges
+		JavaRDD<Tuple2<PersonID,PersonID>> flatMap = objectFile.flatMap(f-> {
+			List<Tuple2<PersonID,PersonID>> result = new ArrayList<>();
+			Tuple2<PersonID, PersonID> tuple = (Tuple2<PersonID, PersonID>) f;
+			PersonID node1 = tuple._1;
+			PersonID node2 = tuple._2;
+			if (!node1.equals(node2)) {
+				result.add(	new Tuple2<PersonID,PersonID>(node1, node2) );
+				result.add(	new Tuple2<PersonID,PersonID>(node2, node1) );
+			}
+			return result.iterator();
+		});
+
+		// grouping by node1 to get all results where it belongs to
+		JavaPairRDD<PersonID,Iterable<Tuple2<PersonID,PersonID>>> groupBy = flatMap.groupBy(f-> f._1);
+		
+		// Iterate over the edges and introduce new ones
+		JavaRDD<Tuple3<PersonID, PersonID, Boolean>> iteration = groupBy.flatMap(f-> {
+			PersonID grouped = f._1;
+			Iterator<Tuple2<PersonID, PersonID>> iterable = f._2().iterator();
+			TreeSet<PersonID> allIds = new TreeSet<PersonID>();
+			allIds.add(grouped);
+			while(iterable.hasNext()) {
+				allIds.add(iterable.next()._2);
+			}
+			
+			Iterator<PersonID> allIdsIt = allIds.iterator();
+			PersonID smallest = allIdsIt.next();
+			boolean isProgress = allIds.size() > 2 && ! grouped.equals(smallest);
+			
+			List<Tuple3<PersonID,PersonID,Boolean>> result = new ArrayList<>();
+			while(allIdsIt.hasNext()) {
+				PersonID id = allIdsIt.next();
+				result.add(new Tuple3<>(smallest, id, isProgress));
+			}
+			return result.iterator();
+		}).distinct();
+		
+		JavaRDD<Tuple2<PersonID, PersonID>> newEdgeSet = iteration.map(f->new Tuple2<PersonID,PersonID>(f._1(),f._2())).distinct();
+		newEdgeSet.saveAsObjectFile(output);
+		
+		JavaRDD<Tuple2<PersonID, PersonID>> progressEdges = iteration.filter(f->f._3().equals(Boolean.TRUE)).map(f-> {
+			return new Tuple2<PersonID,PersonID>(f._1(),f._2());
+		});
+		return progressEdges;
+	}
+	
+
+	public void deduplicatePageviews() {
+		String source = "/tmp/swa/normalized_pageview_users";
+		String out = "/tmp/swa/unique_pageviews";
+	}
 	
 
 	@SuppressWarnings("rawtypes")
@@ -220,8 +332,10 @@ public class BatchWorkflow {
 		ingest(masterPail, newDataPail);
 		normalizeURLs();
 		normalizeUserIds();
+		deduplicatePageviews();
 	}
 	
+
 	public static void main(String[] args) throws Exception {
 		BatchWorkflow bw = new BatchWorkflow();
 		bw.initTestData();
