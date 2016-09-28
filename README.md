@@ -1,6 +1,7 @@
 # spark-bigdata-book
 This is a conversion of the big data book source code from Nathan Marz to spark.
 It is still work in progress but it should give you already an idea about implementing the lambda architecture in spark.
+Some parts of the code might not be optimized as this project is a learning project for me. So feel free to submit pull requrest if you find a better way to solve the problem.
 
 # Get it running
 You should be able to get the spark code running out of the box when you use maven. However as prerequisit you need to have a modified version of dfs-datastores that works with Spark.
