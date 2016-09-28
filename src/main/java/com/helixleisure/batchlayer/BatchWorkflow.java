@@ -316,9 +316,27 @@ public class BatchWorkflow {
 	}
 	
 
-	public void deduplicatePageviews() {
-		String source = "/tmp/swa/normalized_pageview_users";
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public void deduplicatePageviews() throws IOException {
+		String src = "/tmp/swa/normalized_pageview_users";
 		String out = "/tmp/swa/unique_pageviews";
+
+		Pail source = new Pail(Mode.SPARK,src).getSubPail(DataUnit._Fields.PAGE_VIEW.getThriftFieldId());
+		Pail.create(Mode.SPARK,out,new SplitDataPailStructure());
+		
+		JavaSparkContext jsc = JavaSparkContext.fromSparkContext(SparkContext.getOrCreate(conf));
+		JavaPairRDD<Text,Data> pageviews = jsc.hadoopFile(source.getInstanceRoot(), SequenceFilePailDataInputFormat.class, Text.class, Data.class,0);
+
+		JavaRDD<Data> distinct = pageviews.map(f->f._2).distinct();
+		distinct.foreach(f->{
+			if (LOG.isDebugEnabled()) {
+				LOG.debug("serializing {}",f);
+			}
+			Pail output = new Pail(Mode.SPARK,out);
+			TypedRecordOutputStream stream = output.openWrite();
+			stream.writeObject(f);
+			stream.close();
+		});
 	}
 	
 
