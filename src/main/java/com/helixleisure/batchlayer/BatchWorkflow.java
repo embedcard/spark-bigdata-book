@@ -10,6 +10,7 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.TreeSet;
 
 import org.apache.hadoop.conf.Configuration;
@@ -37,6 +38,7 @@ import com.helixleisure.schema.Data;
 import com.helixleisure.schema.DataUnit;
 import com.helixleisure.schema.EquivEdge;
 import com.helixleisure.schema.PageID;
+import com.helixleisure.schema.PageViewEdge;
 import com.helixleisure.schema.PersonID;
 
 import scala.Tuple2;
@@ -327,7 +329,7 @@ public class BatchWorkflow {
 		JavaSparkContext jsc = JavaSparkContext.fromSparkContext(SparkContext.getOrCreate(conf));
 		JavaPairRDD<Text,Data> pageviews = jsc.hadoopFile(source.getInstanceRoot(), SequenceFilePailDataInputFormat.class, Text.class, Data.class,0);
 
-		JavaRDD<Data> distinct = pageviews.map(f->f._2).distinct();
+		JavaRDD<Data> distinct = pageviews.map(f->f._2).distinct().sortBy(f->f, true, 0);
 		distinct.foreach(f->{
 			if (LOG.isDebugEnabled()) {
 				LOG.debug("serializing {}",f);
@@ -337,6 +339,55 @@ public class BatchWorkflow {
 			stream.writeObject(f);
 			stream.close();
 		});
+	}
+	
+	@SuppressWarnings({ "rawtypes", "unchecked" })
+	public JavaRDD<Tuple4<String,String,Integer,Long>> pageviewBatchView() throws IOException{
+		Pail sourcePail = new Pail(Mode.SPARK,"/tmp/swa/unique_pageviews");
+		
+		JavaSparkContext jsc = JavaSparkContext.fromSparkContext(SparkContext.getOrCreate(conf));
+		JavaPairRDD<Text,Data> pageviews = jsc.hadoopFile(sourcePail.getInstanceRoot(), SequenceFilePailDataInputFormat.class, Text.class, Data.class,0);
+
+		// hourly rollup
+		// we could just return a Tuple2 for our calculation but to follow the code from the book we do that in the next step
+		JavaRDD<Tuple3<String,Long,Integer>> map = pageviews.map(f->{
+			final int HOUR_SECS = 60 * 60;
+			Data data = f._2();
+			PageViewEdge pageview = data.getDataunit().getPageView();
+			if (pageview.getPage().getSetField() == PageID._Fields.URL) {
+				int hourBucket = data.getPedigree().getTrueAsOfSecs() / HOUR_SECS;
+				return new Tuple3<>(pageview.getPage().getUrl(), pageview.getPerson().getUserId(), hourBucket);
+			}
+			return null;
+		});
+		map.foreach(f->LOG.debug(f.toString()));
+
+		JavaRDD<Tuple2<String, Integer>> visits = map.map(f->new Tuple2<>(f._1(),f._3()));
+		JavaPairRDD<Tuple2<String, Integer>, Long> hourlyRollupPairs = visits.mapToPair(f-> new Tuple2<>(f,1l)).reduceByKey((v1,v2)->v1+v2);
+		JavaRDD<Tuple3<String, Integer, Long>> hourlyRollup = hourlyRollupPairs.map(f-> new Tuple3<>(f._1._1,f._1._2,f._2));
+		
+		// emiting the granularities
+		JavaPairRDD<Tuple3<String, Integer, String>, Long> granularities = hourlyRollup.flatMapToPair(f-> {
+			int hourBucket = f._2();
+			int dayBucket = hourBucket / 24;
+			int weekBucket = dayBucket / 7;
+			int monthBucket = dayBucket / 28;
+			
+			List<Tuple2<Tuple3<String,Integer,String>,Long>> result = new ArrayList<>();
+			result.add(new Tuple2<>(new Tuple3<>("h", hourBucket, f._1()), f._3()));
+			result.add(new Tuple2<>(new Tuple3<>("d", dayBucket, f._1()), f._3()));
+			result.add(new Tuple2<>(new Tuple3<>("w", weekBucket, f._1()), f._3()));
+			result.add(new Tuple2<>(new Tuple3<>("m", monthBucket, f._1()), f._3()));
+			return result.iterator();
+		});
+		granularities = granularities.reduceByKey((v1,v2)->v1+v2);
+		JavaRDD<Tuple4<String, String, Integer, Long>> map2 = granularities.map(f->
+			new Tuple4<>(f._1._3(),f._1._1(),f._1._2(),f._2)
+		).sortBy(f->f._2(), true, 0);
+		// adding cache for later usage
+		map2.cache();
+		map2.foreach(f->LOG.debug("{}",f));
+		return map2;
 	}
 	
 
@@ -351,6 +402,7 @@ public class BatchWorkflow {
 		normalizeURLs();
 		normalizeUserIds();
 		deduplicatePageviews();
+		pageviewBatchView();
 	}
 	
 
