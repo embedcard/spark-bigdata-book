@@ -9,48 +9,56 @@ import org.apache.thrift.TSerializer;
 
 import com.backtype.hadoop.pail.PailStructure;
 
-public abstract class ThriftPailStructure<T extends Comparable> 
-  implements PailStructure<T> 
-{
-  protected abstract T createThriftObject();
+/**
+ * Adaption of the batch workflow from Nathan Marz
+ * (http://twitter.com/nathanmarz) from his book
+ * https://www.manning.com/books/big-data
+ * 
+ * @author Janos Schwellach (http://twitter.com/jschwellach)
+ */
 
-  private transient TDeserializer des;
+public abstract class ThriftPailStructure<T extends Comparable> implements PailStructure<T> {
+	protected abstract T createThriftObject();
 
-  private TDeserializer getDeserializer() {
-    if(des==null) des = new TDeserializer();
-    return des;
-  }
+	private transient TDeserializer des;
 
-  public T deserialize(byte[] record) {
-    T ret = createThriftObject();
-    try {
-      getDeserializer().deserialize((TBase)ret, record);
-    } catch (TException e) {
-      throw new RuntimeException(e);
-    }
-    return ret;
-  }
+	private TDeserializer getDeserializer() {
+		if (des == null)
+			des = new TDeserializer();
+		return des;
+	}
 
-  private transient TSerializer ser;
+	public T deserialize(byte[] record) {
+		T ret = createThriftObject();
+		try {
+			getDeserializer().deserialize((TBase) ret, record);
+		} catch (TException e) {
+			throw new RuntimeException(e);
+		}
+		return ret;
+	}
 
-  private TSerializer getSerializer() {
-    if(ser==null) ser = new TSerializer();
-    return ser;
-  }
+	private transient TSerializer ser;
 
-  public byte[] serialize(T obj) {
-    try {
-      return getSerializer().serialize((TBase)obj);
-    } catch (TException e) {
-      throw new RuntimeException(e);
-    }
-  }
+	private TSerializer getSerializer() {
+		if (ser == null)
+			ser = new TSerializer();
+		return ser;
+	}
 
-  public boolean isValidTarget(String... dirs) {
-    return true;
-  }
+	public byte[] serialize(T obj) {
+		try {
+			return getSerializer().serialize((TBase) obj);
+		} catch (TException e) {
+			throw new RuntimeException(e);
+		}
+	}
 
-  public List<String> getTarget(T object) {
-    return Collections.EMPTY_LIST;
-  }
+	public boolean isValidTarget(String... dirs) {
+		return true;
+	}
+
+	public List<String> getTarget(T object) {
+		return Collections.EMPTY_LIST;
+	}
 }

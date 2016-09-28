@@ -30,137 +30,152 @@ import com.backtype.hadoop.pail.PailInputSplit;
 import com.backtype.support.Utils;
 import com.helixleisure.schema.Data;
 
+/**
+ * Adaption of the batch workflow from Nathan Marz
+ * (http://twitter.com/nathanmarz) from his book
+ * https://www.manning.com/books/big-data
+ * 
+ * @author Janos Schwellach (http://twitter.com/jschwellach)
+ */
+@SuppressWarnings("rawtypes")
 public class SequenceFilePailDataInputFormat<T> extends SequenceFileInputFormat<Text, Data> {
-    private Pail _currPail;
+	private Pail _currPail;
 
+	@Override
+	public InputSplit[] getSplits(JobConf job, int numSplits) throws IOException {
+		List<InputSplit> ret = new ArrayList<InputSplit>();
+		Path[] roots = FileInputFormat.getInputPaths(job);
+		for (int i = 0; i < roots.length; i++) {
+			_currPail = new Pail(roots[i].toString());
+			InputSplit[] splits = super.getSplits(job, numSplits);
+			for (InputSplit split : splits) {
+				ret.add(new PailInputSplit(_currPail.getFileSystem(), _currPail.getInstanceRoot(), _currPail.getSpec(),
+						job, (FileSplit) split));
+			}
+		}
+		return ret.toArray(new InputSplit[ret.size()]);
+	}
 
-    @Override
-    public InputSplit[] getSplits(JobConf job, int numSplits) throws IOException {
-        List<InputSplit> ret = new ArrayList<InputSplit>();
-        Path[] roots = FileInputFormat.getInputPaths(job);
-        for(int i=0; i < roots.length; i++) {
-            _currPail = new Pail(roots[i].toString());
-            InputSplit[] splits = super.getSplits(job, numSplits);
-            for(InputSplit split: splits) {
-                ret.add(new PailInputSplit(_currPail.getFileSystem(), _currPail.getInstanceRoot(), _currPail.getSpec(), job, (FileSplit) split));
-            }
-        }
-        return ret.toArray(new InputSplit[ret.size()]);
-    }
+	@Override
+	protected FileStatus[] listStatus(JobConf job) throws IOException {
+		List<Path> paths = PailFormatFactory.getPailPaths(_currPail, job);
+		FileSystem fs = _currPail.getFileSystem();
+		FileStatus[] ret = new FileStatus[paths.size()];
+		for (int i = 0; i < paths.size(); i++) {
+			ret[i] = fs.getFileStatus(paths.get(i).makeQualified(fs));
+		}
+		return ret;
+	}
 
-    @Override
-    protected FileStatus[] listStatus(JobConf job) throws IOException {
-        List<Path> paths = PailFormatFactory.getPailPaths(_currPail, job);
-        FileSystem fs = _currPail.getFileSystem();
-        FileStatus[] ret = new FileStatus[paths.size()];
-        for(int i=0; i<paths.size(); i++) {
-            ret[i] = fs.getFileStatus(paths.get(i).makeQualified(fs));
-        }
-        return ret;
-    }
+	@Override
+	public RecordReader<Text, Data> getRecordReader(InputSplit split, JobConf job, Reporter reporter)
+			throws IOException {
+		return new SequenceFilePailThriftRecordReader(job, (PailInputSplit) split, reporter);
+	}
 
-    @Override
-    public RecordReader<Text, Data> getRecordReader(InputSplit split, JobConf job, Reporter reporter) throws IOException {
-        return new SequenceFilePailThriftRecordReader(job, (PailInputSplit) split, reporter);
-    }
-    
-    public static class SequenceFilePailThriftRecordReader implements RecordReader<Text, Data> {
-        private static Logger LOG = LoggerFactory.getLogger(SequenceFilePailThriftRecordReader.class);
-        public static final int NUM_TRIES = 10;
+	public static class SequenceFilePailThriftRecordReader implements RecordReader<Text, Data> {
+		private static Logger LOG = LoggerFactory.getLogger(SequenceFilePailThriftRecordReader.class);
+		public static final int NUM_TRIES = 10;
 
-        JobConf conf;
-        PailInputSplit split;
-        int recordsRead;
-        Reporter reporter;
-        protected static final transient TDeserializer DES = new TDeserializer();
+		JobConf conf;
+		PailInputSplit split;
+		int recordsRead;
+		Reporter reporter;
+		protected static final transient TDeserializer DES = new TDeserializer();
 
-        SequenceFileRecordReader<BytesWritable, NullWritable> delegate;
+		SequenceFileRecordReader<BytesWritable, NullWritable> delegate;
 
+		public SequenceFilePailThriftRecordReader(JobConf conf, PailInputSplit split, Reporter reporter)
+				throws IOException {
+			this.split = split;
+			this.conf = conf;
+			this.recordsRead = 0;
+			this.reporter = reporter;
+			if (LOG.isInfoEnabled()) {
+				LOG.info("Processing pail file {}", split.getPath().toString());
+			}
+			resetDelegate();
+		}
 
-        public SequenceFilePailThriftRecordReader(JobConf conf, PailInputSplit split, Reporter reporter) throws IOException {
-           this.split = split;
-           this.conf = conf;
-           this.recordsRead = 0;
-           this.reporter = reporter;
-           if (LOG.isInfoEnabled()) {
-        	   LOG.info("Processing pail file {}",split.getPath().toString());
-           }
-           resetDelegate();
-        }
+		private void resetDelegate() throws IOException {
+			this.delegate = new SequenceFileRecordReader<BytesWritable, NullWritable>(conf, split);
+			BytesWritable dummyValue = new BytesWritable();
+			for (int i = 0; i < recordsRead; i++) {
+				delegate.next(dummyValue, NullWritable.get());
+			}
+		}
 
-        private void resetDelegate() throws IOException {
-           this.delegate = new SequenceFileRecordReader<BytesWritable, NullWritable>(conf, split);
-           BytesWritable dummyValue = new BytesWritable();
-           for(int i=0; i<recordsRead; i++) {
-               delegate.next(dummyValue, NullWritable.get());
-           }
-        }
+		private void progress() {
+			if (reporter != null) {
+				reporter.progress();
+			}
+		}
 
-        private void progress() {
-            if(reporter!=null) {
-                reporter.progress();
-            }
-        }
-
-        public boolean next(Text k, Data v) throws IOException {
-            /**
-             * There's 2 bugs that happen here, both resulting in indistinguishable EOFExceptions.
-             *
-             * 1. Random EOFExceptions when reading data off of S3. Usually succeeds on the 2nd try.
-             * 2. Corrupted files most likely due to network corruption (which isn't handled by Hadoop/S3 integration).
-             *    These always result in error.
-             *
-             * The strategy is to retry a few times. If it fails every time then we're in case #2, and the best thing we can do
-             * is continue on and accept the data loss. If we're in case #1, it'll just succeed.
-             */
-            for(int i=0; i<NUM_TRIES; i++) {
-                try {
-                	BytesWritable dummyValue = new BytesWritable();
-                    boolean ret = delegate.next(dummyValue, NullWritable.get());
-                    k.set(split.getPailRelPath());
-                    recordsRead++;
-                    // if the delegate processed the value, we can parse it to our data unit
-                    if (ret) {
-                    	try {
+		public boolean next(Text k, Data v) throws IOException {
+			/**
+			 * There's 2 bugs that happen here, both resulting in
+			 * indistinguishable EOFExceptions.
+			 *
+			 * 1. Random EOFExceptions when reading data off of S3. Usually
+			 * succeeds on the 2nd try. 2. Corrupted files most likely due to
+			 * network corruption (which isn't handled by Hadoop/S3
+			 * integration). These always result in error.
+			 *
+			 * The strategy is to retry a few times. If it fails every time then
+			 * we're in case #2, and the best thing we can do is continue on and
+			 * accept the data loss. If we're in case #1, it'll just succeed.
+			 */
+			for (int i = 0; i < NUM_TRIES; i++) {
+				try {
+					BytesWritable dummyValue = new BytesWritable();
+					boolean ret = delegate.next(dummyValue, NullWritable.get());
+					k.set(split.getPailRelPath());
+					recordsRead++;
+					// if the delegate processed the value, we can parse it to
+					// our data unit
+					if (ret) {
+						try {
 							DES.deserialize(v, dummyValue.getBytes());
 						} catch (TException e) {
 							throw new IOException(e);
 						}
-                    }
-                    return ret;
-                } catch(EOFException e) {
-                    progress();
-                    Utils.sleep(10000); //in case it takes time for S3 to recover
-                    progress();
-                    //this happens due to some sort of S3 corruption bug.
-                    LOG.error("Hit an EOF exception while processing file " + split.getPath().toString() +
-                              " with records read = " + recordsRead);
-                    resetDelegate();
-                }
-            }
-            //stop trying to read the file at this point and discard the rest of the file
-            return false;
-        }
+					}
+					return ret;
+				} catch (EOFException e) {
+					progress();
+					Utils.sleep(10000); // in case it takes time for S3 to
+										// recover
+					progress();
+					// this happens due to some sort of S3 corruption bug.
+					LOG.error("Hit an EOF exception while processing file " + split.getPath().toString()
+							+ " with records read = " + recordsRead);
+					resetDelegate();
+				}
+			}
+			// stop trying to read the file at this point and discard the rest
+			// of the file
+			return false;
+		}
 
-        public Text createKey() {
-            return new Text();
-        }
+		public Text createKey() {
+			return new Text();
+		}
 
-        public Data createValue() {
-            return new Data();
-        }
+		public Data createValue() {
+			return new Data();
+		}
 
-        public long getPos() throws IOException {
-            return delegate.getPos();
-        }
+		public long getPos() throws IOException {
+			return delegate.getPos();
+		}
 
-        public void close() throws IOException {
-            delegate.close();
-        }
+		public void close() throws IOException {
+			delegate.close();
+		}
 
-        public float getProgress() throws IOException {
-            return delegate.getProgress();
-        }
+		public float getProgress() throws IOException {
+			return delegate.getProgress();
+		}
 
-    }
+	}
 }
