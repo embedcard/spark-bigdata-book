@@ -10,7 +10,6 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.TreeSet;
 
 import org.apache.hadoop.conf.Configuration;
@@ -24,7 +23,6 @@ import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.Optional;
 import org.apache.spark.api.java.function.Function;
-import org.apache.spark.api.java.function.Function2;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,7 +43,12 @@ import scala.Tuple2;
 import scala.Tuple3;
 import scala.Tuple4;
 
-
+/**
+ * Adaption of the batch workflow from Nathan Marz (http://twitter.com/nathanmarz) from his book
+ * https://www.manning.com/books/big-data
+ * 
+ * @author Janos Schwellach (http://twitter.com/jschwellach)
+ */
 public class BatchWorkflow {
 	private static final Logger LOG = LoggerFactory.getLogger(BatchWorkflow.class);
 	
@@ -68,7 +71,6 @@ public class BatchWorkflow {
 		Pail masterPail = Pail.create(MASTER_ROOT, new SplitDataPailStructure());
         Pail<Data> newPail = Pail.create(NEW_ROOT, new DataPailStructure());
 
-        @SuppressWarnings("rawtypes")
 		TypedRecordOutputStream os = newPail.openWrite();
         os.writeObject(makePageview(1, "http://foo.com/post1", 60));
         os.writeObject(makePageview(3, "http://foo.com/post1", 62));
@@ -91,7 +93,7 @@ public class BatchWorkflow {
 	public void init() {
 		conf = new SparkConf();
 		// we need to add the following two lines to be able to serialize the
-		// java classes of hadoop. This list is comma seperated
+		// java classes of hadoop.
 		conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
 				.set("spark.kryo.classesToRegister", "org.apache.hadoop.io.Text")
 				.set("spark.kryo.classesToRegister", "com.backtype.hadoop.pail.Pail")
@@ -130,7 +132,6 @@ public class BatchWorkflow {
 		JavaSparkContext jsc = JavaSparkContext.fromSparkContext(SparkContext.getOrCreate(conf));
 		
 		JavaPairRDD<Text,Data> hadoopFile = jsc.hadoopFile(source.getInstanceRoot(), SequenceFilePailDataInputFormat.class, Text.class, Data.class,0);
-		// TODO: check if there is a more efficient way to do it
 		hadoopFile.foreach(f-> {
 			Pail s = new Pail(Mode.SPARK,sinkFolder);
 			TypedRecordOutputStream stream = s.openWrite();
@@ -151,7 +152,6 @@ public class BatchWorkflow {
 		
 		JavaPairRDD<Text,Data> hadoopFile = jsc.hadoopFile(masterDataset.getInstanceRoot(), SequenceFilePailDataInputFormat.class, Text.class, Data.class,0);
 		JavaRDD<Data> map = hadoopFile.map(new NormalizeURL());
-		// TODO: checking if we can use spark methodes (map.saveAsTextFile) instead
 		map.foreach(f-> {
 			if (LOG.isDebugEnabled()) {
 				LOG.debug("serializing {}",f);
@@ -260,9 +260,6 @@ public class BatchWorkflow {
 			stream.writeObject(f);
 			stream.close();
 		});
-		
-		
-		
 	}
 	
 	@SuppressWarnings("unchecked")
