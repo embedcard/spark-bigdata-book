@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE log4j:configuration SYSTEM "log4j.dtd" >
+<log4j:configuration>
+	<appender name="stdout" class="org.apache.log4j.ConsoleAppender">
+		<param name="threshold" value="debug"/>
+		<layout class="org.apache.log4j.PatternLayout">
+			<param name="ConversionPattern" value="%d{ABSOLUTE} %5p %l - %m%n" />
+		</layout>
+	</appender>
+
+	<appender name="default.file" class="org.apache.log4j.FileAppender">
+		<param name="file" value="${user.home}/log/helix-spark-test.log" />
+		<param name="append" value="false" />
+		<param name="threshold" value="debug" />
+		<layout class="org.apache.log4j.PatternLayout">
+			<param name="ConversionPattern" value="%d{ISO8601} %-5p [%c{1}] - %m%n" />
+		</layout>
+	</appender>
+
+
+	<category name="org.apache.http.wire">
+		<priority value="warn" />
+	</category>
+
+	<category name="org.apache.http">
+		<priority value="warn" />
+	</category>
+
+	<category name="com.amazonaws">
+		<priority value="warn" />
+	</category>
+
+	<category name="org.apache.http.wire">
+		<priority value="warn" />
+	</category>
+
+	<category name="org.apache.http">
+		<priority value="warn" />
+	</category>
+
+	<category name="org.apache.commons.httpclient">
+		<level value="warn" />
+	</category>
+
+	<category name="httpclient">
+		<level value="warn" />
+	</category>
+
+	<category name="httpclient.wire">
+		<level value="warn" />
+	</category>
+
+	<category name="org.jets3t.service">
+		<level value="warn" />
+	</category>
+
+	<category name="org.apache.spark">
+		<!-- <priority value="debug"/> -->
+		<level value="off" />
+	</category>
+	
+	<category name="org.spark-project.jetty">
+		<!-- <priority value="debug"/> -->
+		<level value="WARN" />
+	</category>
+
+	<category name="org">
+		<level value="warn" />
+	</category>
+	
+	<logger name="org.apache.spark">
+		<level value="error" />
+	</logger>
+	
+	<logger name="akka">
+		<level value="warn" />
+	</logger>
+	
+	<logger name="org">
+		<level value="warn" />
+	</logger>
+
+	<logger name="io">
+		<level value="warn" />
+	</logger>
+
+	
+	<logger name="Remoting">
+		<level value="warn" />
+	</logger>
+	
+	<logger name="de.schwellach.pail.SequenceFilePailDataInputFormat$SequenceFilePailThriftRecordReader">
+		<level value="warn"/>
+	</logger>
+	
+	<root>
+		<priority value="debug"></priority>
+		<appender-ref ref="stdout" />
+		<appender-ref ref="default.file" />
+	</root>
+</log4j:configuration>
